@@ -1,0 +1,479 @@
+# Databricks Asset Bundle for AMD Capacity Forecasting Pipeline
+# Deploy: databricks bundle deploy -t dev
+# Run:    databricks bundle run -t dev amd_forecasting_pipeline
+#
+# Brand-level:
+# Deploy: databricks bundle deploy -t dev_brand
+# Run:    databricks bundle run -t dev_brand amd_forecasting_pipeline_brand
+
+bundle:
+  name: amd-forecasting
+
+# Ensure supporting files are deployed alongside notebooks
+sync:
+  include:
+    - "configs/**"
+    - "modeling_dev/**"
+    - "01_training_functions.py"
+    - "requirements.txt"
+  exclude:
+    - ".claude/**"
+    - ".vscode/**"
+    - "**/.DS_Store"
+    - "**/__pycache__/**"
+    - "**/lightning_logs/**"
+    - "**/manifest.mf"
+    - "shared/**"
+    - "GENERATE_PREDICTIONS_ALL_QUARTER_DATABRICKS.py"
+    - "00_data_diagnostics.py"
+
+# Variables for parameterization across targets
+# These match the dbutils.widgets defaults in the notebooks
+variables:
+  # Shared across all notebooks
+  catalog:
+    description: Unity Catalog name
+    default: dash_workshop
+  schema:
+    description: Schema name
+    default: default
+  data_table:
+    description: Source data table name (without catalog.schema prefix)
+    default: sci_masked_horizon_data
+  model_name_prefix:
+    description: Prefix for registered MLflow models
+    default: forecasting
+  scoring_table:
+    description: Delta table for model binaries
+    default: scoring_output
+  partition_columns:
+    description: Columns to partition on (comma-separated)
+    default: MARKET_SEGMENT,SCENARIO
+  config_path:
+    description: Path to YAML config file
+    default: configs/model_config.yaml
+  experiment_name:
+    description: MLflow experiment path
+    default: /Shared/dab-pipeline-forecasting
+
+  # Training-specific
+  log_to_mlflow:
+    description: Whether to log models to MLflow nested runs
+    default: "true"
+  register_to_registry:
+    description: Whether to register models to MLflow Model Registry (only if log_to_mlflow=true)
+    default: "true"
+
+  # Evaluation-specific
+  eval_source:
+    description: Where to load models from (mlflow or delta)
+    default: mlflow
+  # Inference-specific
+  model_source:
+    description: Where to load champion models from (mlflow or delta)
+    default: mlflow
+  predictions_table:
+    description: Predictions output table name (empty = derive from data_table)
+    default: ""
+
+  # Interpretability-specific
+  interpretability_scope:
+    description: Scope for interpretability analysis (champions or all)
+    default: all
+  shap_sample_size:
+    description: Max samples for SHAP computation (performance tuning)
+    default: "100"
+
+workspace:
+  host: https://adb-984752964297111.11.azuredatabricks.net
+  # Source code synced here -- this is the folder users download.
+  file_path: /Workspace/Users/${workspace.current_user.userName}/amd-forecasting-bundle/files
+  # DAB state (Terraform, artifacts) lives in a hidden sibling directory
+  # so it doesn't bloat the downloadable source folder.
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.amd-forecasting-state/${bundle.target}
+
+targets:
+  dev:
+    default: true
+    mode: development
+    variables:
+      predictions_table: sci_masked_horizon_data_predictions
+    resources:
+      jobs:
+        amd_forecasting_pipeline:
+          name: AMD Forecasting Pipeline
+          parameters: &pipeline_parameters
+            # Shared
+            - name: catalog
+              default: ${var.catalog}
+            - name: schema
+              default: ${var.schema}
+            - name: data_table
+              default: ${var.data_table}
+            - name: model_name_prefix
+              default: ${var.model_name_prefix}
+            - name: scoring_table
+              default: ${var.scoring_table}
+            - name: partition_columns
+              default: ${var.partition_columns}
+            - name: config_path
+              default: ${var.config_path}
+            - name: experiment_name
+              default: ${var.experiment_name}
+            # Training-specific
+            - name: log_to_mlflow
+              default: ${var.log_to_mlflow}
+            - name: register_to_registry
+              default: ${var.register_to_registry}
+            # Evaluation-specific
+            - name: eval_source
+              default: ${var.eval_source}
+            # Inference-specific
+            - name: model_source
+              default: ${var.model_source}
+            - name: predictions_table
+              default: ${var.predictions_table}
+            # Interpretability-specific
+            - name: interpretability_scope
+              default: ${var.interpretability_scope}
+            - name: shap_sample_size
+              default: ${var.shap_sample_size}
+
+          tasks: &pipeline_tasks
+            # Task 1: Training
+            - task_key: training
+              notebook_task: &training_notebook
+                notebook_path: ./02_model_training.py
+                base_parameters:
+                  catalog: "{{job.parameters.catalog}}"
+                  schema: "{{job.parameters.schema}}"
+                  data_table: "{{job.parameters.data_table}}"
+                  model_name_prefix: "{{job.parameters.model_name_prefix}}"
+                  experiment_name: "{{job.parameters.experiment_name}}"
+                  config_path: "{{job.parameters.config_path}}"
+                  scoring_table: "{{job.parameters.scoring_table}}"
+                  log_to_mlflow: "{{job.parameters.log_to_mlflow}}"
+                  register_to_registry: "{{job.parameters.register_to_registry}}"
+                  partition_columns: "{{job.parameters.partition_columns}}"
+
+            # Task 2: Evaluation (depends on training)
+            - task_key: eval
+              depends_on:
+                - task_key: training
+              notebook_task: &eval_notebook
+                notebook_path: ./03_model_evaluation.py
+                base_parameters:
+                  catalog: "{{job.parameters.catalog}}"
+                  schema: "{{job.parameters.schema}}"
+                  data_table: "{{job.parameters.data_table}}"
+                  model_name_prefix: "{{job.parameters.model_name_prefix}}"
+                  experiment_name: "{{job.parameters.experiment_name}}"
+                  config_path: "{{job.parameters.config_path}}"
+                  scoring_table: "{{job.parameters.scoring_table}}"
+                  eval_source: "{{job.parameters.eval_source}}"
+                  partition_columns: "{{job.parameters.partition_columns}}"
+
+            # Task 3: Inference (depends on evaluation)
+            - task_key: inference
+              depends_on:
+                - task_key: eval
+              notebook_task: &inference_notebook
+                notebook_path: ./04_inference.py
+                base_parameters:
+                  catalog: "{{job.parameters.catalog}}"
+                  schema: "{{job.parameters.schema}}"
+                  data_table: "{{job.parameters.data_table}}"
+                  model_name_prefix: "{{job.parameters.model_name_prefix}}"
+                  experiment_name: "{{job.parameters.experiment_name}}"
+                  config_path: "{{job.parameters.config_path}}"
+                  scoring_table: "{{job.parameters.scoring_table}}"
+                  model_source: "{{job.parameters.model_source}}"
+                  predictions_table: "{{job.parameters.predictions_table}}"
+                  partition_columns: "{{job.parameters.partition_columns}}"
+
+            # Task 4: Interpretability (depends on evaluation, runs in parallel with inference)
+            - task_key: interpretability
+              depends_on:
+                - task_key: eval
+              notebook_task: &interpretability_notebook
+                notebook_path: ./05_interpretability.py
+                base_parameters:
+                  catalog: "{{job.parameters.catalog}}"
+                  schema: "{{job.parameters.schema}}"
+                  data_table: "{{job.parameters.data_table}}"
+                  model_name_prefix: "{{job.parameters.model_name_prefix}}"
+                  experiment_name: "{{job.parameters.experiment_name}}"
+                  config_path: "{{job.parameters.config_path}}"
+                  scoring_table: "{{job.parameters.scoring_table}}"
+                  eval_source: "{{job.parameters.eval_source}}"
+                  partition_columns: "{{job.parameters.partition_columns}}"
+                  interpretability_scope: "{{job.parameters.interpretability_scope}}"
+                  shap_sample_size: "{{job.parameters.shap_sample_size}}"
+
+        # Standalone monitoring job -- triggered by data table refresh.
+        # Scores old predictions against newly available actuals, checks model staleness.
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh
+          parameters: &monitoring_parameters
+            - name: catalog
+              default: ${var.catalog}
+            - name: schema
+              default: ${var.schema}
+            - name: data_table
+              default: ${var.data_table}
+            - name: experiment_name
+              default: ${var.experiment_name}
+            - name: config_path
+              default: ${var.config_path}
+            - name: scoring_table
+              default: ${var.scoring_table}
+            - name: partition_columns
+              default: ${var.partition_columns}
+          tasks: &monitoring_tasks
+            - task_key: model_monitoring
+              notebook_task: &monitoring_notebook
+                notebook_path: ./06_model_monitoring.py
+                base_parameters:
+                  catalog: "{{job.parameters.catalog}}"
+                  schema: "{{job.parameters.schema}}"
+                  data_table: "{{job.parameters.data_table}}"
+                  experiment_name: "{{job.parameters.experiment_name}}"
+                  config_path: "{{job.parameters.config_path}}"
+                  scoring_table: "{{job.parameters.scoring_table}}"
+                  partition_columns: "{{job.parameters.partition_columns}}"
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600
+
+  dev_basic:
+    mode: development
+    variables:
+      predictions_table: sci_masked_horizon_data_predictions_basic
+      config_path: configs/model_config_basic.yaml
+      scoring_table: scoring_output_basic
+      experiment_name: /Shared/dab-pipeline-forecasting-basic
+    resources:
+      jobs:
+        amd_forecasting_pipeline_basic:
+          name: AMD Forecasting Pipeline (Basic - Original Config)
+          parameters: *pipeline_parameters
+          tasks: *pipeline_tasks
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh (Basic)
+          parameters: *monitoring_parameters
+          tasks: *monitoring_tasks
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600
+
+  dev_brand:
+    mode: development
+    variables:
+      data_table: sci_masked_horizon_data_psf
+      predictions_table: sci_masked_horizon_data_psf_predictions
+      partition_columns: "MARKET_SEGMENT,SCENARIO,PRODUCT_SUB_FAMILY"
+      scoring_table: scoring_output_brand
+      model_name_prefix: forecasting_brand
+      experiment_name: /Shared/dab-pipeline-forecasting-brand
+      log_to_mlflow: "false"
+      register_to_registry: "false"
+      eval_source: delta
+      model_source: delta
+    resources:
+      jobs:
+        amd_forecasting_pipeline_brand:
+          name: AMD Forecasting Pipeline (Brand Level)
+          parameters: *pipeline_parameters
+          tasks: *pipeline_tasks
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh (Brand)
+          parameters: *monitoring_parameters
+          tasks: *monitoring_tasks
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600
+
+  # ---------------------------------------------------------------------------
+  # AMD Compute targets -- dedicated job clusters on AMD EPYC (Lasv3 series).
+  # Identical pipelines to serverless targets but pinned to AMD hardware.
+  # Uses the "AMD Job Compute" cluster policy (DF642E64CD000F2E).
+  # Deploy: databricks bundle deploy -t dev_amd
+  # Run:    databricks bundle run -t dev_amd amd_forecasting_pipeline
+  # ---------------------------------------------------------------------------
+
+  dev_amd:
+    mode: development
+    variables:
+      predictions_table: sci_masked_horizon_data_predictions
+      config_path: configs/model_config_amd_compute.yaml
+    resources:
+      jobs:
+        amd_forecasting_pipeline:
+          name: AMD Forecasting Pipeline (AMD Compute)
+          # Commented out for serverless - uncomment to use dedicated AMD EPYC clusters
+          # job_clusters: &amd_job_clusters
+          #   - job_cluster_key: ml_cluster_amd
+          #     new_cluster:
+          #       policy_id: "DF642E64CD000F2E"
+          #       spark_version: "17.3.x-cpu-ml-scala2.13"
+          #       node_type_id: "Standard_L16as_v3"
+          #       num_workers: 16
+          #       custom_tags:
+          #         projectName: amd-forecasting
+          #         team: amd-forecasting
+          #       spark_conf:
+          #         spark.databricks.delta.preview.enabled: "true"
+          #         spark.sql.execution.arrow.enabled: "true"
+          #         spark.sql.adaptive.enabled: "true"
+          #         spark.python.worker.reuse: "true"
+          #         spark.speculation: "false"
+          parameters: *pipeline_parameters
+          tasks: &pipeline_tasks_amd
+            - task_key: training
+              # job_cluster_key: ml_cluster_amd  # commented out for serverless
+              notebook_task: *training_notebook
+            - task_key: eval
+              # job_cluster_key: ml_cluster_amd  # commented out for serverless
+              depends_on:
+                - task_key: training
+              notebook_task: *eval_notebook
+            - task_key: inference
+              # job_cluster_key: ml_cluster_amd  # commented out for serverless
+              depends_on:
+                - task_key: eval
+              notebook_task: *inference_notebook
+            - task_key: interpretability
+              # job_cluster_key: ml_cluster_amd  # commented out for serverless
+              depends_on:
+                - task_key: eval
+              notebook_task: *interpretability_notebook
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh (AMD Compute)
+          # job_clusters: *amd_job_clusters  # commented out for serverless
+          parameters: *monitoring_parameters
+          tasks: &monitoring_tasks_amd
+            - task_key: model_monitoring
+              # job_cluster_key: ml_cluster_amd  # commented out for serverless
+              notebook_task: *monitoring_notebook
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600
+
+  dev_brand_amd:
+    mode: development
+    variables:
+      data_table: sci_masked_horizon_data_psf
+      predictions_table: sci_masked_horizon_data_psf_predictions
+      partition_columns: "MARKET_SEGMENT,SCENARIO,PRODUCT_SUB_FAMILY"
+      scoring_table: scoring_output_brand
+      model_name_prefix: forecasting_brand
+      experiment_name: /Shared/dab-pipeline-forecasting-brand
+      log_to_mlflow: "false"
+      register_to_registry: "false"
+      eval_source: delta
+      model_source: delta
+      config_path: configs/model_config_amd_compute.yaml
+    resources:
+      jobs:
+        amd_forecasting_pipeline_brand:
+          name: AMD Forecasting Pipeline (Brand Level, AMD Compute)
+          # Mirrors dev_amd cluster but with autoscale instead of fixed num_workers.
+          # Cannot use YAML merge -- num_workers and autoscale are mutually exclusive.
+          # Commented out for serverless - uncomment to use dedicated AMD EPYC clusters (autoscale)
+          # job_clusters:
+          #   - job_cluster_key: ml_cluster_amd
+          #     new_cluster:
+          #       policy_id: "DF642E64CD000F2E"
+          #       spark_version: "17.3.x-cpu-ml-scala2.13"
+          #       node_type_id: "Standard_L16as_v3"
+          #       autoscale:
+          #         min_workers: 16
+          #         max_workers: 32
+          #       custom_tags:
+          #         projectName: amd-forecasting
+          #         team: amd-forecasting
+          #       spark_conf:
+          #         spark.databricks.delta.preview.enabled: "true"
+          #         spark.sql.execution.arrow.enabled: "true"
+          #         spark.sql.adaptive.enabled: "true"
+          #         spark.python.worker.reuse: "true"
+          #         spark.speculation: "false"
+          parameters: *pipeline_parameters
+          tasks: *pipeline_tasks_amd
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh (Brand, AMD Compute)
+          # job_clusters: *amd_job_clusters  # commented out for serverless
+          parameters: *monitoring_parameters
+          tasks: *monitoring_tasks_amd
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600
+
+  qa:
+    mode: production
+    workspace:
+      host: FILL_IN_HERE  # TODO: Set to QA Azure Databricks workspace URL
+    variables:
+      experiment_name: /Shared/amd-forecasting-qa
+    resources:
+      jobs:
+        amd_forecasting_pipeline:
+          name: AMD Forecasting Pipeline
+          parameters: *pipeline_parameters
+          tasks: *pipeline_tasks
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh
+          parameters: *monitoring_parameters
+          tasks: *monitoring_tasks
+          # Uncomment to enable monitoring trigger in QA:
+          # trigger:
+          #   table_update:
+          #     table_names:
+          #       - "${var.catalog}.${var.schema}.${var.data_table}"
+          #     condition: ANY_UPDATED
+          #     min_time_between_triggers_seconds: 3600
+
+  prod:
+    mode: production
+    workspace:
+      host: FILL_IN_HERE  # TODO: Set to Prod Azure Databricks workspace URL
+    variables:
+      experiment_name: /Shared/amd-forecasting-prod
+    resources:
+      jobs:
+        amd_forecasting_pipeline:
+          name: AMD Forecasting Pipeline
+          parameters: *pipeline_parameters
+          tasks: *pipeline_tasks
+          # Uncomment to enable table-update-triggered training runs in prod:
+          # trigger:
+          #   table_update:
+          #     table_names:
+          #       - "${var.catalog}.${var.schema}.${var.data_table}"
+          #     min_time_between_triggers_seconds: 300
+          #     wait_after_last_change_seconds: 300
+        monitoring_on_data_refresh:
+          name: AMD Monitoring on Data Refresh
+          parameters: *monitoring_parameters
+          tasks: *monitoring_tasks
+          trigger:
+            table_update:
+              table_names:
+                - "${var.catalog}.${var.schema}.${var.data_table}"
+              condition: ANY_UPDATED
+              min_time_between_triggers_seconds: 3600

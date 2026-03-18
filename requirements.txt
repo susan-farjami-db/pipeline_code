@@ -1,0 +1,13 @@
+mlflow[databricks]
+prophet
+xgboost
+scikit-learn
+pandas
+numpy
+cloudpickle
+pyyaml
+catboost
+statsforecast
+lightgbm
+neuralforecast
+psutil

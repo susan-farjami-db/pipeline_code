@@ -1,0 +1,94 @@
+# Shared variables and constants used across pipeline notebooks
+# This file consolidates hardcoded values to reduce duplication
+
+# Standard columns selected when loading horizon data for training/eval/inference
+# Notebook 05 (interpretability) appends MINUS6_MONTH columns to this list
+# Notebook 06 (monitoring) uses a shorter list (only needs actuals for scoring)
+SELECT_COLUMNS:
+  - QUARTER
+  - QUARTER_PARSED
+  - MARKET_SEGMENT
+  - SCENARIO
+  - VERIFICATION_HORIZON
+  - PREDICTION_HORIZON
+  - BB
+  - BILLING_MOVING_AVERAGE_2Q
+  - BILLING_MOVING_AVERAGE_3Q
+  - BILLING_MOVING_AVERAGE_4Q
+  - BILLING_MOVING_AVERAGE_5Q
+  - BB_VERSION
+  - MOF_VERSION
+  - BB_VERSION_LATEST
+  - MOF_VERSION_LATEST
+  - MOF_0_MONTH
+  - MOF_PLUS_BUFFER_0_MONTH
+  - SELLIN_0_MONTH
+  - SR_0_MONTH
+  - SELLIN_MINUS3_MONTH
+  - MOF_MINUS3_MONTH
+  - SR_MINUS3_MONTH
+  - MOF_PLUS_BUFFER_MINUS3_MONTH
+
+# Column rename mappings for demand signals
+# Original column names -> standardized short names (used in 4+ places)
+DEMAND_SIGNAL_RENAMES:
+  BB: BILLING
+  MOF_0_MONTH: MOF
+  MOF_PLUS_BUFFER_0_MONTH: MOF_PLUS_BUFFER
+  SELLIN_0_MONTH: SELLIN
+  SR_0_MONTH: SR
+
+# Display formatting
+PARTITION_NAME_MAX_LEN: 40
+
+# Regressor columns used for feature selection and adjustment
+REGRESSOR_COLUMNS:
+  - SELLIN_MINUS3_MONTH
+  - MOF_PLUS_BUFFER_MINUS3_MONTH
+  - SR_MINUS3_MONTH
+  - BILLING_MOVING_AVERAGE_2Q
+  - BILLING_MOVING_AVERAGE_3Q
+  - BILLING_MOVING_AVERAGE_4Q
+  - BILLING_MOVING_AVERAGE_5Q
+
+# Standard output columns for predictions
+PREDICTION_OUTPUT_COLUMNS:
+  - MARKET_SEGMENT
+  - QUARTER
+  - QUARTER_PARSED
+  - BILLING
+  - BILLING_PREDICTED
+  - VERIFICATION_HORIZON
+  - PREDICTION_HORIZON
+  - BB_VERSION
+  - MOF_VERSION
+  - BB_VERSION_LATEST
+  - MOF_VERSION_LATEST
+  - MOF
+  - MOF_PLUS_BUFFER
+  - SELLIN
+  - SR
+
+# Columns to include in predictions sample for MLflow artifacts
+PREDICTIONS_SAMPLE_COLUMNS:
+  - QUARTER_PARSED
+  - BILLING
+  - BILLING_PREDICTED
+  - MARKET_SEGMENT
+  - QUARTER
+
+# Base display columns for training output (pre-rename, without target/prediction cols)
+# Each handler adds its own target columns (BB vs y) and regressors
+DISPLAY_COLUMNS_BASE:
+  - MARKET_SEGMENT
+  - QUARTER
+  - VERIFICATION_HORIZON
+  - PREDICTION_HORIZON
+  - BB_VERSION
+  - MOF_VERSION
+  - BB_VERSION_LATEST
+  - MOF_VERSION_LATEST
+  - MOF_0_MONTH
+  - MOF_PLUS_BUFFER_0_MONTH
+  - SELLIN_0_MONTH
+  - SR_0_MONTH
