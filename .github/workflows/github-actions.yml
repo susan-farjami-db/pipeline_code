@@ -1,0 +1,58 @@
+# GitHub Actions workflow for AMD Forecasting Pipeline (dev environment)
+#
+# Triggers:
+#   - Manual dispatch (workflow_dispatch) from the GitHub Actions UI
+#   - Scheduled daily at 06:00 UTC (approximates data-refresh trigger; adjust as needed)
+#
+# Prerequisites -- set these GitHub secrets:
+#   DATABRICKS_HOST           
+#   DATABRICKS_CLIENT_ID      Service Principal application (client) ID
+#   DATABRICKS_CLIENT_SECRET  Service Principal secret
+
+name: Deploy and Run AMD Forecasting (dev)
+
+on:
+  workflow_dispatch:          # Manual trigger from GitHub Actions UI
+
+  # Uncomment the schedule below to approximate a data-refresh trigger.
+  # Adjust the cron expression to match your data refresh cadence.
+  # schedule:
+  #   - cron: "0 6 * * *"    # Daily at 06:00 UTC
+
+env:
+  DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+  DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+  DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+
+jobs:
+  deploy:
+    name: Deploy bundle to dev
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validate bundle
+        run: databricks bundle validate --target dev
+
+      - name: Deploy bundle
+        run: databricks bundle deploy --target dev
+
+  run_pipeline:
+    name: Run forecasting pipeline
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Run pipeline
+        run: databricks bundle run --target dev amd_forecasting_pipeline
