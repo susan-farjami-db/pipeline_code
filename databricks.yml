@@ -320,22 +320,22 @@ targets:
         amd_forecasting_pipeline:
           name: AMD Forecasting Pipeline (AMD Compute)
           # Commented out for serverless - uncomment to use dedicated AMD EPYC clusters
-          # job_clusters: &amd_job_clusters
-          #   - job_cluster_key: ml_cluster_amd
-          #     new_cluster:
-          #       policy_id: "DF642E64CD000F2E"
-          #       spark_version: "17.3.x-cpu-ml-scala2.13"
-          #       node_type_id: "Standard_L16as_v3"
-          #       num_workers: 16
-          #       custom_tags:
-          #         projectName: amd-forecasting
-          #         team: amd-forecasting
-          #       spark_conf:
-          #         spark.databricks.delta.preview.enabled: "true"
-          #         spark.sql.execution.arrow.enabled: "true"
-          #         spark.sql.adaptive.enabled: "true"
-          #         spark.python.worker.reuse: "true"
-          #         spark.speculation: "false"
+          job_clusters: &amd_job_clusters
+            - job_cluster_key: ml_cluster_amd
+              new_cluster:
+                policy_id: "DF642E64CD000F2E"
+                spark_version: "17.3.x-cpu-ml-scala2.13"
+                node_type_id: "Standard_L16as_v3"
+                num_workers: 16
+                custom_tags:
+                  projectName: amd-forecasting
+                  team: amd-forecasting
+                spark_conf:
+                  spark.databricks.delta.preview.enabled: "true"
+                  spark.sql.execution.arrow.enabled: "true"
+                  spark.sql.adaptive.enabled: "true"
+                  spark.python.worker.reuse: "true"
+                  spark.speculation: "false"
           parameters: *pipeline_parameters
           tasks: &pipeline_tasks_amd
             - task_key: training
@@ -392,24 +392,24 @@ targets:
           # Mirrors dev_amd cluster but with autoscale instead of fixed num_workers.
           # Cannot use YAML merge -- num_workers and autoscale are mutually exclusive.
           # Commented out for serverless - uncomment to use dedicated AMD EPYC clusters (autoscale)
-          # job_clusters:
-          #   - job_cluster_key: ml_cluster_amd
-          #     new_cluster:
-          #       policy_id: "DF642E64CD000F2E"
-          #       spark_version: "17.3.x-cpu-ml-scala2.13"
-          #       node_type_id: "Standard_L16as_v3"
-          #       autoscale:
-          #         min_workers: 16
-          #         max_workers: 32
-          #       custom_tags:
-          #         projectName: amd-forecasting
-          #         team: amd-forecasting
-          #       spark_conf:
-          #         spark.databricks.delta.preview.enabled: "true"
-          #         spark.sql.execution.arrow.enabled: "true"
-          #         spark.sql.adaptive.enabled: "true"
-          #         spark.python.worker.reuse: "true"
-          #         spark.speculation: "false"
+          job_clusters:
+            - job_cluster_key: ml_cluster_amd
+              new_cluster:
+                policy_id: "DF642E64CD000F2E"
+                spark_version: "17.3.x-cpu-ml-scala2.13"
+                node_type_id: "Standard_L16as_v3"
+                autoscale:
+                  min_workers: 16
+                  max_workers: 32
+                custom_tags:
+                  projectName: amd-forecasting
+                  team: amd-forecasting
+                spark_conf:
+                  spark.databricks.delta.preview.enabled: "true"
+                  spark.sql.execution.arrow.enabled: "true"
+                  spark.sql.adaptive.enabled: "true"
+                  spark.python.worker.reuse: "true"
+                  spark.speculation: "false"
           parameters: *pipeline_parameters
           tasks: *pipeline_tasks_amd
         monitoring_on_data_refresh:
